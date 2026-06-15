@@ -95,13 +95,10 @@ const DB = (() => {
 })();
 
 /* ---------- App state ---------- */
-const DEFAULT_TAGS = ['חברתי', 'שיחת טלפון', 'נהיגה', 'קניות', 'עבודה', 'מקום הומה'];
 const State = {
-  entries: [],          // {id, createdAt, text, predicted|null, actual|null, helped, tags[]}
-  customTags: [],       // user-added tags
+  entries: [],          // {id, createdAt, text, predicted|null, actual|null}
   view: 'list',
   search: '',
-  filterTag: null,
   editingId: null,
 };
 
@@ -161,18 +158,10 @@ function localInputToTs(val) {
   return new Date(y, m - 1, day, hh, mm).getTime();
 }
 
-function allTags() {
-  const used = new Set();
-  State.entries.forEach(e => (e.tags || []).forEach(t => used.add(t)));
-  const set = new Set([...DEFAULT_TAGS, ...State.customTags, ...used]);
-  return [...set];
-}
-
 /* ---------- Persistence helpers ---------- */
 async function loadAll() {
   State.entries = await DB.all();
   State.entries.sort((a, b) => b.createdAt - a.createdAt);
-  State.customTags = await DB.getMeta('customTags', []);
 }
 async function saveEntry(entry) {
   await DB.put(entry);
@@ -183,12 +172,6 @@ async function saveEntry(entry) {
 async function deleteEntry(id) {
   await DB.del(id);
   State.entries = State.entries.filter(e => e.id !== id);
-}
-async function addCustomTag(tag) {
-  if (!State.customTags.includes(tag)) {
-    State.customTags.push(tag);
-    await DB.setMeta('customTags', State.customTags);
-  }
 }
 
 /* ===========================================================
@@ -217,11 +200,7 @@ function setNav(show) {
 function filteredEntries() {
   const q = State.search.trim().toLowerCase();
   return State.entries.filter(e => {
-    if (State.filterTag && !(e.tags || []).includes(State.filterTag)) return false;
-    if (q) {
-      const hay = `${e.text || ''} ${e.helped || ''} ${(e.tags || []).join(' ')}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
+    if (q && !(e.text || '').toLowerCase().includes(q)) return false;
     return true;
   });
 }
@@ -236,7 +215,12 @@ function sudsChips(e) {
 }
 
 function renderList() {
-  const tags = allTags();
+  // Empty journal: keep the page clean so the centered "תיעוד הצלחה" button is the focal point.
+  if (!State.entries.length) {
+    main.innerHTML = '';
+    return;
+  }
+
   const list = filteredEntries();
 
   let html = `
@@ -245,21 +229,8 @@ function renderList() {
         placeholder="חיפוש בתיעודים…" value="${esc(State.search)}" />
     </div>`;
 
-  if (tags.length) {
-    html += `<div class="filter-row">
-      <button class="filter-pill ${!State.filterTag ? 'active' : ''}" data-tag="">הכול</button>
-      ${tags.map(t => `<button class="filter-pill ${State.filterTag === t ? 'active' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}
-    </div>`;
-  }
-
-  if (!State.entries.length) {
-    html += `<div class="empty">
-      <span class="emoji">🌱</span>
-      <h3>כל התחלה היא הצלחה</h3>
-      <p>כאן יופיעו הרגעים שבהם התמודדת.<br>לחצי על "תיעוד הצלחה" כדי להתחיל —<br>גם הצעד הקטן ביותר נחשב.</p>
-    </div>`;
-  } else if (!list.length) {
-    html += `<div class="empty"><span class="emoji">🔍</span><h3>לא נמצאו תוצאות</h3><p>נסי חיפוש אחר או הסירי את הסינון.</p></div>`;
+  if (!list.length) {
+    html += `<div class="empty"><span class="emoji">🔍</span><h3>לא נמצאו תוצאות</h3><p>נסי חיפוש אחר.</p></div>`;
   } else {
     let lastDay = null;
     list.forEach(e => {
@@ -268,12 +239,12 @@ function renderList() {
         html += `<div class="day-divider">${esc(relativeDay(e.createdAt))}</div>`;
         lastDay = dk;
       }
-      const tagsHtml = (e.tags || []).map(t => `<span class="tag-chip">${esc(t)}</span>`).join('');
       const chips = sudsChips(e);
       html += `<div class="entry-card" data-id="${e.id}">
+        <button class="ec-del" data-del="${e.id}" aria-label="מחיקה">🗑️</button>
         <div class="ec-date">🕊️ ${fmtTime(e.createdAt)}</div>
         <div class="ec-text">${esc(e.text) || '<i style="color:var(--ink-soft)">ללא תיאור</i>'}</div>
-        ${(chips || tagsHtml) ? `<div class="ec-meta">${chips}${tagsHtml}</div>` : ''}
+        ${chips ? `<div class="ec-meta">${chips}</div>` : ''}
       </div>`;
     });
   }
@@ -283,16 +254,22 @@ function renderList() {
   const si = $('#searchInput');
   if (si) si.addEventListener('input', (e) => {
     State.search = e.target.value;
-    // light re-render of just the list portion would be nicer, but keep simple
     renderListBodyOnly();
   });
-  main.querySelectorAll('.filter-pill').forEach(p =>
-    p.addEventListener('click', () => {
-      State.filterTag = p.dataset.tag || null;
-      renderList();
+  main.querySelectorAll('.ec-del').forEach(b =>
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      quickDelete(b.dataset.del);
     }));
   main.querySelectorAll('.entry-card').forEach(c =>
     c.addEventListener('click', () => openDetail(c.dataset.id)));
+}
+
+async function quickDelete(id) {
+  if (!confirm('האם אתה בטוח?')) return;
+  await deleteEntry(id);
+  toast('התיעוד נמחק');
+  renderList();
 }
 
 // re-render without losing search input focus: only rebuild the cards area
@@ -307,13 +284,12 @@ function renderListBodyOnly() {
 
 /* ----- FORM ----- */
 function blankDraft() {
-  return { id: null, createdAt: Date.now(), text: '', predicted: null, actual: null, helped: '', tags: [] };
+  return { id: null, createdAt: Date.now(), text: '', predicted: null, actual: null };
 }
 let draft = null;
 
 function renderForm() {
   const e = draft;
-  const tags = allTags();
 
   main.innerHTML = `
   <div class="form">
@@ -336,19 +312,6 @@ function renderForm() {
       ${sudsBlock('actual', 'חרדה שחשתי בפועל', e.actual)}
     </div>
 
-    <div class="field">
-      <label class="field-label">מה עזר לי? <span class="opt">לא חובה</span></label>
-      <input class="input" id="fHelped" placeholder="נשימות, חבר/ה לצידי, להזכיר לעצמי שזה זמני…" value="${esc(e.helped)}" />
-    </div>
-
-    <div class="field">
-      <label class="field-label">סוג המצב <span class="opt">לא חובה</span></label>
-      <div class="tags-wrap" id="fTags">
-        ${tags.map(t => `<button type="button" class="tag-toggle ${e.tags.includes(t) ? 'on' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}
-        <button type="button" class="tag-add" id="addTagBtn">+ תגית חדשה</button>
-      </div>
-    </div>
-
     <div class="form-actions">
       <button class="btn btn-primary" id="saveBtn">${State.editingId ? 'שמירת שינויים' : 'שמירת ההצלחה ✨'}</button>
     </div>
@@ -357,25 +320,9 @@ function renderForm() {
   // text
   $('#fText').addEventListener('input', ev => e.text = ev.target.value);
   $('#fDate').addEventListener('change', ev => { if (ev.target.value) e.createdAt = localInputToTs(ev.target.value); });
-  $('#fHelped').addEventListener('input', ev => e.helped = ev.target.value);
 
   wireSuds('pred', v => e.predicted = v);
   wireSuds('actual', v => e.actual = v);
-
-  // tags
-  $('#fTags').querySelectorAll('.tag-toggle').forEach(b =>
-    b.addEventListener('click', () => {
-      const t = b.dataset.tag;
-      if (e.tags.includes(t)) { e.tags = e.tags.filter(x => x !== t); b.classList.remove('on'); }
-      else { e.tags.push(t); b.classList.add('on'); }
-    }));
-  $('#addTagBtn').addEventListener('click', async () => {
-    const t = (prompt('שם התגית החדשה:') || '').trim();
-    if (!t) return;
-    await addCustomTag(t);
-    if (!e.tags.includes(t)) e.tags.push(t);
-    renderForm();
-  });
 
   $('#saveBtn').addEventListener('click', onSave);
   setTimeout(() => $('#fText').focus(), 60);
@@ -429,8 +376,7 @@ function wireSuds(kind, setter) {
 async function onSave() {
   const e = draft;
   e.text = (e.text || '').trim();
-  e.helped = (e.helped || '').trim();
-  if (!e.text && e.predicted == null && e.actual == null && !e.tags.length) {
+  if (!e.text && e.predicted == null && e.actual == null) {
     toast('כתבי משהו קצר או הוסיפי דירוג 🙂');
     return;
   }
@@ -455,8 +401,6 @@ function renderDetail() {
   const e = State.entries.find(x => x.id === State.editingId);
   if (!e) { State.view = 'list'; return render(); }
 
-  const tagsHtml = (e.tags || []).map(t => `<span class="tag-chip">${esc(t)}</span>`).join('');
-
   let sudsHtml = '';
   if (e.predicted != null || e.actual != null) {
     sudsHtml = `<div class="detail-section">
@@ -475,8 +419,6 @@ function renderDetail() {
     <div class="detail-date">🕊️ ${fmtDate(e.createdAt)} · ${fmtTime(e.createdAt)}</div>
     <div class="detail-text">${esc(e.text) || '<i style="color:var(--ink-soft)">ללא תיאור</i>'}</div>
     ${sudsHtml}
-    ${e.helped ? `<div class="detail-section"><h4>מה עזר לי</h4><div class="helped-box">${esc(e.helped)}</div></div>` : ''}
-    ${tagsHtml ? `<div class="detail-section"><h4>סוג המצב</h4><div class="detail-tags">${tagsHtml}</div></div>` : ''}
     <div class="detail-actions">
       <button class="btn btn-primary" id="editBtn">עריכה</button>
       <button class="btn btn-danger" id="delBtn">מחיקה</button>
@@ -484,12 +426,12 @@ function renderDetail() {
   </div>`;
 
   $('#editBtn').addEventListener('click', () => {
-    draft = { ...e, tags: [...(e.tags || [])] };
+    draft = { ...e };
     State.view = 'form';
     render();
   });
   $('#delBtn').addEventListener('click', async () => {
-    if (!confirm('למחוק את התיעוד הזה? לא ניתן לשחזר.')) return;
+    if (!confirm('האם אתה בטוח?')) return;
     await deleteEntry(e.id);
     toast('התיעוד נמחק');
     State.editingId = null;
@@ -645,7 +587,6 @@ function stamp() {
 function exportJSON() {
   const data = {
     app: 'success-log', version: 1, exportedAt: new Date().toISOString(),
-    customTags: State.customTags,
     entries: State.entries,
   };
   download(`גיבוי-יומן-הצלחות-${stamp()}.json`, JSON.stringify(data, null, 2), 'application/json');
@@ -657,11 +598,10 @@ function csvCell(v) {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 function exportCSV() {
-  const head = ['תאריך','שעה','תיאור','חרדה חזויה','חרדה בפועל','מה עזר','תגיות'];
+  const head = ['תאריך','שעה','תיאור','חרדה חזויה','חרדה בפועל'];
   const rows = [...State.entries].sort((a,b)=>a.createdAt-b.createdAt).map(e => [
     fmtDate(e.createdAt), fmtTime(e.createdAt), e.text || '',
-    e.predicted != null ? e.predicted : '', e.actual != null ? e.actual : '',
-    e.helped || '', (e.tags || []).join('; ')
+    e.predicted != null ? e.predicted : '', e.actual != null ? e.actual : ''
   ].map(csvCell).join(','));
   const csv = '\uFEFF' + [head.map(csvCell).join(','), ...rows].join('\r\n');
   download(`יומן-הצלחות-${stamp()}.csv`, csv, 'text/csv;charset=utf-8');
@@ -695,8 +635,6 @@ function exportPDF() {
         <div class="pm">
           ${e.predicted != null ? `<b>חרדה חזויה:</b> ${e.predicted} ` : ''}
           ${e.actual != null ? `&nbsp; <b>בפועל:</b> ${e.actual}` : ''}
-          ${e.helped ? `<br><b>מה עזר:</b> ${esc(e.helped)}` : ''}
-          ${(e.tags||[]).length ? `<br><b>מצב:</b> ${esc(e.tags.join(', '))}` : ''}
         </div>
       </div>`).join('')}`;
   closeMenu();
@@ -723,10 +661,6 @@ function importJSON(file) {
         await DB.put(e);
         added++;
       }
-      if (data.customTags && Array.isArray(data.customTags)) {
-        State.customTags = [...new Set([...State.customTags, ...data.customTags])];
-        await DB.setMeta('customTags', State.customTags);
-      }
       await loadAll();
       State.view = 'list';
       render();
@@ -745,8 +679,6 @@ function normalizeEntry(raw) {
     text: raw.text || '',
     predicted: raw.predicted != null ? Number(raw.predicted) : null,
     actual: raw.actual != null ? Number(raw.actual) : null,
-    helped: raw.helped || '',
-    tags: Array.isArray(raw.tags) ? raw.tags : [],
   };
 }
 
