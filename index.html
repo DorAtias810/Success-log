@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#f6b88a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="יומן הצלחות" />
+  <title>יומן הצלחות</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Top bar -->
+    <header class="topbar" id="topbar">
+      <button class="icon-btn" id="navBack" aria-label="חזרה" hidden>‹</button>
+      <h1 class="topbar-title" id="topbarTitle">יומן הצלחות</h1>
+      <button class="icon-btn" id="menuBtn" aria-label="תפריט">⋯</button>
+    </header>
+
+    <!-- Main scroll area -->
+    <main id="main"></main>
+
+    <!-- Floating add button -->
+    <button class="fab" id="fab" aria-label="תיעוד הצלחה חדשה">
+      <span class="fab-text">תיעוד הצלחה</span>
+      <span class="fab-plus">+</span>
+    </button>
+
+    <!-- Bottom navigation -->
+    <nav class="bottomnav" id="bottomnav">
+      <button class="navtab active" data-view="list">
+        <span class="navtab-ico">📋</span>
+        <span class="navtab-lbl">יומן</span>
+      </button>
+      <button class="navtab" data-view="stats">
+        <span class="navtab-ico">📈</span>
+        <span class="navtab-lbl">התקדמות</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Menu sheet -->
+  <div class="sheet-backdrop" id="menuBackdrop" hidden>
+    <div class="sheet" id="menuSheet" role="menu">
+      <div class="sheet-handle"></div>
+      <h2 class="sheet-title">גיבוי וייצוא</h2>
+      <button class="sheet-item" data-action="export-json"><span>💾</span> ייצוא / גיבוי (JSON)</button>
+      <button class="sheet-item" data-action="import-json"><span>📥</span> ייבוא מגיבוי</button>
+      <button class="sheet-item" data-action="export-csv"><span>📊</span> ייצוא לקובץ CSV</button>
+      <button class="sheet-item" data-action="export-pdf"><span>🖨️</span> דוח להדפסה / PDF</button>
+      <button class="sheet-item sheet-cancel" data-action="close">ביטול</button>
+    </div>
+  </div>
+
+  <input type="file" id="importFile" accept="application/json,.json" hidden />
+
+  <!-- Toast -->
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
