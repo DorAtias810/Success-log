@@ -100,6 +100,7 @@ const State = {
   view: 'list',
   search: '',
   editingId: null,
+  focusSuds: null,      // when editing, optionally pre-activate a SUDS field ('actual')
 };
 
 /* ---------- Utilities ---------- */
@@ -111,6 +112,18 @@ function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// SUDS value -> color, blending green (calm/low) → yellow → orange (intense/high)
+function sudsColor(v) {
+  const t = Math.max(0, Math.min(100, v)) / 100;
+  const green = [123, 173, 122];   // calm
+  const yellow = [225, 184, 96];   // mid
+  const orange = [231, 140, 78];   // intense
+  let c;
+  if (t < 0.5) c = green.map((g, i) => Math.round(g + (yellow[i] - g) * (t / 0.5)));
+  else c = yellow.map((y, i) => Math.round(y + (orange[i] - y) * ((t - 0.5) / 0.5)));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 
 const HE_DAYS = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
@@ -240,11 +253,15 @@ function renderList() {
         lastDay = dk;
       }
       const chips = sudsChips(e);
+      // Retrospective affordance: let the user come back and fill in actual anxiety.
+      const addActual = (e.actual == null)
+        ? `<button class="ec-addactual" data-actual="${e.id}">＋ הוסיפי חרדה בפועל</button>` : '';
+      const meta = chips + addActual;
       html += `<div class="entry-card" data-id="${e.id}">
         <button class="ec-del" data-del="${e.id}" aria-label="מחיקה">🗑️</button>
-        <div class="ec-date">🕊️ ${fmtTime(e.createdAt)}</div>
+        <div class="ec-date">${fmtTime(e.createdAt)}</div>
         <div class="ec-text">${esc(e.text) || '<i style="color:var(--ink-soft)">ללא תיאור</i>'}</div>
-        ${chips ? `<div class="ec-meta">${chips}</div>` : ''}
+        ${meta ? `<div class="ec-meta">${meta}</div>` : ''}
       </div>`;
     });
   }
@@ -261,8 +278,24 @@ function renderList() {
       ev.stopPropagation();
       quickDelete(b.dataset.del);
     }));
+  main.querySelectorAll('.ec-addactual').forEach(b =>
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      editEntry(b.dataset.actual, 'actual');
+    }));
   main.querySelectorAll('.entry-card').forEach(c =>
     c.addEventListener('click', () => openDetail(c.dataset.id)));
+}
+
+// Open an existing entry in the edit form. focusKind: optionally activate a SUDS field ('actual').
+function editEntry(id, focusKind) {
+  const e = State.entries.find(x => x.id === id);
+  if (!e) return;
+  State.editingId = id;
+  draft = { ...e };
+  State.focusSuds = focusKind || null;
+  State.view = 'form';
+  render();
 }
 
 async function quickDelete(id) {
@@ -322,10 +355,18 @@ function renderForm() {
   $('#fDate').addEventListener('change', ev => { if (ev.target.value) e.createdAt = localInputToTs(ev.target.value); });
 
   wireSuds('pred', v => e.predicted = v);
-  wireSuds('actual', v => e.actual = v);
+  const activateActual = wireSuds('actual', v => e.actual = v);
+
+  // Coming from "add actual anxiety": pre-activate that slider and bring it into view.
+  if (State.focusSuds === 'actual') {
+    activateActual();
+    setTimeout(() => $('#sr-actual').scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+  } else {
+    setTimeout(() => $('#fText').focus(), 60);
+  }
+  State.focusSuds = null;
 
   $('#saveBtn').addEventListener('click', onSave);
-  setTimeout(() => $('#fText').focus(), 60);
 }
 
 function sudsBlock(kind, label, val) {
@@ -335,7 +376,7 @@ function sudsBlock(kind, label, val) {
   <div class="suds-block" data-kind="${kind}">
     <div class="suds-head">
       <span class="lbl">${label}</span>
-      <span class="suds-val ${has ? '' : 'empty-val'}" id="sv-${kind}">${has ? val : 'לא דורג'}</span>
+      <span class="suds-val ${has ? '' : 'empty-val'}" id="sv-${kind}" ${has ? `style="color:${sudsColor(val)}"` : ''}>${has ? val : 'לא דורג'}</span>
     </div>
     <div class="suds-row">
       <input type="range" min="0" max="100" step="1" value="${v}" id="sr-${kind}" class="${has ? '' : 'inactive'}" />
@@ -355,6 +396,7 @@ function wireSuds(kind, setter) {
     range.classList.remove('inactive');
     valEl.classList.remove('empty-val');
     valEl.textContent = range.value;
+    valEl.style.color = sudsColor(parseInt(range.value, 10));
     setter(parseInt(range.value, 10));
     clear.textContent = 'נקה דירוג';
   };
@@ -366,11 +408,13 @@ function wireSuds(kind, setter) {
       range.classList.add('inactive');
       valEl.classList.add('empty-val');
       valEl.textContent = 'לא דורג';
+      valEl.style.color = '';
       range.value = 50;
       setter(null);
       clear.textContent = 'הקש/החלק כדי לדרג';
     }
   });
+  return activate;
 }
 
 async function onSave() {
@@ -406,9 +450,11 @@ function renderDetail() {
     sudsHtml = `<div class="detail-section">
       <h4>דירוג חרדה (0–100)</h4>
       <div class="suds-pair">
-        <div class="suds-card"><div class="num pred">${e.predicted != null ? e.predicted : '–'}</div><div class="cap">חזוי מראש</div></div>
-        <div class="suds-card"><div class="num actual">${e.actual != null ? e.actual : '–'}</div><div class="cap">בפועל</div></div>
+        <div class="suds-card"><div class="num"${e.predicted != null ? ` style="color:${sudsColor(e.predicted)}"` : ''}>${e.predicted != null ? e.predicted : '–'}</div><div class="cap">חזוי מראש</div></div>
+        <div class="suds-card"><div class="num"${e.actual != null ? ` style="color:${sudsColor(e.actual)}"` : ''}>${e.actual != null ? e.actual : '–'}</div><div class="cap">בפועל</div></div>
       </div>
+      ${e.actual == null
+        ? `<div style="text-align:center;margin-top:12px"><button class="ec-addactual" id="addActualBtn">＋ הוסיפי חרדה בפועל</button></div>` : ''}
       ${(e.predicted != null && e.actual != null && e.actual < e.predicted)
         ? `<div class="insight" style="margin-top:12px">החרדה בפועל הייתה נמוכה ב‑${e.predicted - e.actual} נק' ממה שחששת. הראש לרוב מגזים — ועכשיו יש לך הוכחה 💛</div>` : ''}
     </div>`;
@@ -416,7 +462,7 @@ function renderDetail() {
 
   main.innerHTML = `
   <div class="detail">
-    <div class="detail-date">🕊️ ${fmtDate(e.createdAt)} · ${fmtTime(e.createdAt)}</div>
+    <div class="detail-date">${fmtDate(e.createdAt)} · ${fmtTime(e.createdAt)}</div>
     <div class="detail-text">${esc(e.text) || '<i style="color:var(--ink-soft)">ללא תיאור</i>'}</div>
     ${sudsHtml}
     <div class="detail-actions">
@@ -424,6 +470,9 @@ function renderDetail() {
       <button class="btn btn-danger" id="delBtn">מחיקה</button>
     </div>
   </div>`;
+
+  const addActualBtn = $('#addActualBtn');
+  if (addActualBtn) addActualBtn.addEventListener('click', () => editEntry(e.id, 'actual'));
 
   $('#editBtn').addEventListener('click', () => {
     draft = { ...e };
@@ -443,7 +492,6 @@ function renderDetail() {
 /* ----- STATS ----- */
 function renderStats() {
   const all = State.entries;
-  const rated = all.filter(e => e.predicted != null || e.actual != null);
   const bothRated = all.filter(e => e.predicted != null && e.actual != null);
 
   if (!all.length) {
@@ -455,33 +503,53 @@ function renderStats() {
     const vals = arr.filter(e => e[key] != null).map(e => e[key]);
     return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
   };
-  const avgPred = avg(rated, 'predicted');
-  const avgActual = avg(rated, 'actual');
+  // Predicted-vs-actual comparison stats only count entries that have BOTH values.
+  const avgPred = avg(bothRated, 'predicted');
+  const avgActual = avg(bothRated, 'actual');
   const avgDrop = bothRated.length
     ? Math.round(bothRated.reduce((a, e) => a + (e.predicted - e.actual), 0) / bothRated.length) : null;
 
-  // entries per week (last 8 weeks)
+  // entries per week (last 8 weeks) — frequency counts every entry
   const weeks = buildWeeks(all, 8);
 
-  // comparison over time (per week, only rated)
-  const weekRatings = buildWeekRatings(rated, 8);
+  // comparison over time (per week, entries with both values only)
+  const weekRatings = buildWeekRatings(bothRated, 8);
 
-  let insight = '';
-  if (avgDrop != null && avgDrop > 0) {
-    insight = `בממוצע, החרדה שחשת בפועל הייתה נמוכה ב‑<b>${avgDrop} נק'</b> ממה שחזית מראש. ההתמודדות שלך מלמדת את המוח שהפחד מוגזם — וזה בדיוק העניין 💛`;
-  } else if (rated.length) {
-    insight = `תיעדת ${rated.length} התמודדויות עם דירוג. כל אחת מהן היא צעד — המשיכי כך 🌿`;
+  // Prominent key takeaway: average gap between predicted and actual (entries with BOTH values only).
+  let insightHero = '';
+  if (avgDrop != null) {
+    const countNote = `מבוסס על ${bothRated.length} ${bothRated.length === 1 ? 'הצלחה' : 'הצלחות'} עם שני הדירוגים`;
+    if (avgDrop >= 3) {
+      insightHero = `<div class="insight-hero good">
+        <span class="ih-num">‎−${avgDrop}</span>
+        <div class="ih-text">בממוצע, החרדה בפועל הייתה נמוכה ב‑${avgDrop} נקודות מהצפי 💛</div>
+        <div class="ih-sub">הראש נוטה להגזים — ועכשיו יש לך הוכחה. ${countNote}</div>
+      </div>`;
+    } else if (avgDrop <= -3) {
+      const g = Math.abs(avgDrop);
+      insightHero = `<div class="insight-hero up">
+        <span class="ih-num">‎+${g}</span>
+        <div class="ih-text">בממוצע, החרדה בפועל הייתה גבוהה ב‑${g} נקודות מהצפי</div>
+        <div class="ih-sub">גם זה מידע יקר ערך — כל תיעוד עוזר להכיר את עצמך. ${countNote}</div>
+      </div>`;
+    } else {
+      insightHero = `<div class="insight-hero even">
+        <span class="ih-num">≈</span>
+        <div class="ih-text">בממוצע, החרדה בפועל הייתה דומה למה שחזית מראש</div>
+        <div class="ih-sub">הצפי שלך מדויק למדי. ${countNote}</div>
+      </div>`;
+    }
   }
 
   let html = `
+    ${insightHero}
+
     <div class="stats-grid">
       <div class="stat-card"><div class="big neutral">${all.length}</div><div class="cap">סה"כ הצלחות</div></div>
       <div class="stat-card"><div class="big neutral">${entriesThisWeek(all)}</div><div class="cap">השבוע</div></div>
       ${avgPred != null ? `<div class="stat-card"><div class="big pred">${avgPred}</div><div class="cap">חרדה חזויה (ממוצע)</div></div>` : ''}
       ${avgActual != null ? `<div class="stat-card"><div class="big actual">${avgActual}</div><div class="cap">חרדה בפועל (ממוצע)</div></div>` : ''}
     </div>
-
-    ${insight ? `<div class="insight">${insight}</div>` : ''}
 
     <div class="section-title">הצלחות בשבוע</div>
     <div class="chart">
@@ -524,7 +592,7 @@ function renderStats() {
         <span><span class="legend-dot actual"></span>בפועל</span>
       </div>
     </div>
-    <p style="font-size:12px;color:var(--ink-soft);text-align:center;margin-top:10px">* מוצגות רק הצלחות שיש בהן דירוג חרדה (${rated.length} מתוך ${all.length}).</p>`;
+    <p style="font-size:12px;color:var(--ink-soft);text-align:center;margin-top:10px">* מוצגות רק הצלחות שיש בהן גם חרדה חזויה וגם בפועל (${bothRated.length} מתוך ${all.length}).</p>`;
   }
 
   main.innerHTML = html;

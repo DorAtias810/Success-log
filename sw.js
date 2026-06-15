@@ -1,5 +1,5 @@
 /* Service worker — offline-first cache for יומן הצלחות */
-const CACHE = 'success-log-v2';
+const CACHE = 'success-log-v3';
 const ASSETS = [
   './',
   './index.html',
